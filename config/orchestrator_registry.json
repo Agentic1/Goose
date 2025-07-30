@@ -1,0 +1,201 @@
+{
+    "EchoService": {
+      "description": "Echoes text for testing",
+      "connector_type": "delegate",
+      "target_inbox": "AG1:service:echo_agent_activation_requests:inbox",
+      "connector_details": {},
+      "capabilities_keywords": [
+        "echo",
+        "test",
+        "repeat",
+        "ping",
+        "debug"
+      ]
+    },
+    "Muse1": {
+      "description": "An agent For general queries your muse and gateway agent",
+      "connector_type": "delegate",
+      "target_inbox": "AG1:agent:Muse1:inbox",
+      "connector_details": {},
+      "capabilities_keywords": [
+        "Personal",
+        "Knowledge"
+        
+      ]
+    },
+    "Muse2": {
+      "description": "An agent For general queries your muse and gateway agent",
+      "connector_type": "delegate",
+      "target_inbox": "AG1:agent:Muse2:inbox",
+      "connector_details": {},
+      "capabilities_keywords": [
+        "Personal",
+        "Knowledge"
+      ]
+    },
+    "HeartBeatService": {
+      "description": "Provides heartbeat status",
+      "connector_type": "delegate",
+      "target_inbox": "AG1:agent:HeartBeat:inbox",
+      "connector_details": {},
+      "capabilities_keywords": [
+        "heartbeat",
+        "status",
+        "health",
+        "alive",
+        "monitor"
+      ]
+    },
+    "SocialManagerService": {
+      "description": "Manages social media interactions including posting to Twitter, Instagram, and LinkedIn.",
+      "connector_type": "delegate",
+      "target_inbox": "AG1:agent:social_agent:inbox",
+      "connector_details": {},
+      "capabilities_keywords": [
+        "social",
+        "twitter",
+        "instagram",
+        "linkedin",
+        "post",
+        "tweet",
+        "social media"
+      ]
+    },
+    "EthAgentService": {
+      "description": "An agent that provides Ethereum blockchain information, such as account balances and transaction details.",
+      "connector_type": "delegate",
+      "target_inbox": "AG1:agent:EthAgent:inbox",
+      "connector_details": {},
+      "capabilities_keywords": [
+        "ethereum",
+        "eth",
+        "blockchain",
+        "crypto",
+        "wallet",
+        "transaction",
+        "balance",
+        "defi",
+        "web3"
+      ]
+    },
+    "ASI_LLM_Service": {
+      "description": "Provides access to ASI LLM capabilities via the ASIOneLLMProxy.",
+      "connector_type": "delegate",
+      "target_inbox": "AG1:agent:ASIOneClientAgent:inbox",
+      "connector_details": {},
+      "capabilities_keywords": [
+        "asi",
+        "asione",
+        "llm",
+        "ai",
+        "chat",
+        "language model",
+        "gpt",
+        "completion",
+        "generate text"
+      ]
+    },
+    "BraveSearchWebService": {
+      "description": "Performs web searches using BraveSearch via the A2AProxy.",
+      "connector_type": "a2a",
+      "target_inbox": "AG1:agent:A2AProxy:inbox",
+      "connector_details": {
+        "target_a2a_agent": "BraveSearchAgent"
+      },
+      "capabilities_keywords": [
+        "search",
+        "web search",
+        "brave",
+        "internet",
+        "lookup",
+        "find", 
+        "google",
+        "duckduckgo"
+      ]
+    },
+    "AITech_AutoXPost_Tweet": {
+      "description": "Generates a tweet from input text and sends it for approval via AITech's external API.",
+      "connector_type": "aitech_http",
+      "service_key": "autoxpost.tweet_trigger",
+      "target_inbox": "AG1:edge:aitech:main:inbox",
+      "connector_details": {
+        "service_key": "autoxpost.tweet_trigger"
+      },
+      "capabilities_keywords": [
+        "tweet",
+        "twitter",
+        "x",
+        "post",
+        "social media"
+      ]
+    },
+    "SystemAgent": {
+      "description": "An agent that handles system-level commands for the user interface, such as changing UI backgrounds or managing system settings.",
+      "connector_type": "delegate",
+      "target_inbox": "AG1:agent:SystemAgent:inbox",
+      "connector_details": {},
+      "capabilities_keywords": [
+        "system",
+        "control",
+        "settings",
+        "ui",
+        "background",
+        "theme",
+        "preferences",
+        "config"
+      ]
+    },
+    "Fetch_Network": {
+      "description": "Proxy/discovery  # fetch_search for live Fetch.ai uAgents. Supports search, agent listing, and direct agent calls via bus.",
+      "connector_type": "delegate",
+      "target_inbox": "AG1:edge:fetch:main:inbox",
+      "connector_details": {
+        "supports_search": true,
+        "search_function": "search_network",
+        "call_function": "call_agent"
+      },
+      "capabilities_keywords": [
+        "fetch",
+        "uagent",
+        "search",
+        "network",
+        "ai",
+        "agentverse"
+      ]
+    },
+    "GatherAgent": {
+      "description": "Gather research data",
+      "connector_type": "delegate",
+      "target_inbox": "AG1:agent:GatherAgent:inbox",
+      "connector_details": {},
+      "capabilities_keywords": [
+        "Gather",
+        "Research",
+        "instagram"
+        
+      ]
+    },
+    "WS_OrchestratorAgent": {
+      "description": "Orchestrates web scraping operations using WebsiteAnalyst, TemplateEngineer, TestExecutor, and SelfHealing agents.",
+      "connector_type": "delegate",
+      "target_inbox": "AG1:agent:WS_OrchestratorAgent:inbox",
+      "connector_details": {},
+      "capabilities_keywords": [
+        "web scraping",
+        "template",
+        "analysis",
+        "testing",
+        "self-healing",
+        "automation",
+        "website"
+      ]
+    },
+    "GooseAgent": {
+        "target_inbox": "AG1:agent:GooseAgent:inbox",
+        "description": "Inbox stream for AG1Goose",
+        "connector_type": "redis",
+        "connector_details": {},
+        "capabilities_keywords": ["orchestrate", "inbox"]
+        }
+  }
+  

@@ -1,0 +1,27 @@
+[workspace]
+members = [
+    "crates/*",          # every existing Goose crate
+    "crates/bus",        # new AetherBus driver
+    "crates/ag1_meta",   # meta‑orchestrator extension
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "2.1.0"
+authors = ["SDC"]
+license = "Apache-2.0"
+repository = "https://github.com/agentic1/ag1goose.git"
+description = "ag1goose"
+
+[workspace.lints.clippy]
+uninlined_format_args = "allow"
+
+[workspace.dependencies]
+rmcp = { version = "0.2.1", features = ["schemars"] }
+
+# Patch for Windows cross-compilation issue with crunchy
+[patch.crates-io]
+crunchy = { git = "https://github.com/nmathewson/crunchy", branch = "cross-compilation-fix" }
+#goose-core  = { path = "crates/goose-core" }
+#promptkit   = { path = "crates/promptkit" }
