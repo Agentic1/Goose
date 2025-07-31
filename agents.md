@@ -2,6 +2,8 @@
 
 ## Redis Streams Consumer Groups Implementation
 
+NB : IN pythonexamples/ there is documentation and python code on the AetherBus and subscriptions as a guide for any aetherbus enhancements! NB.
+
 ### Current Limitations
 1. **No Consumer Groups**: 
    - Current implementation uses basic XREAD without consumer groups
@@ -219,106 +221,13 @@ if __name__ == "__main__":
    - No special handling needed for thinking messages
    - Ensure message envelope preserves all fields
 
-## Critical Issue: Null Content in Agent Communication
 
-### Problem Description
-Messages sent from the Goose WebSocket interface to the social agent are being received with `null` content, causing downstream processing failures. This issue is specific to the WebSocket interface, as the `ag1goose-bridge` implementation appears to work correctly.
-
-### Affected Components
-1. **Goose Web Interface** (`goose-cli/src/commands/web.rs`)
-   - Handles WebSocket connections and message forwarding
-   - Uses `process_message_streaming` to handle incoming messages
-
-2. **Agent Communication Layer** (`ag1_meta/src/lib.rs`)
-   - Manages message delegation between agents
-   - Contains `delegate_with_opts` where content handling occurs
-
-3. **MCP Server** (`ag1_mcp_server`)
-   - Receives and routes messages between agents
-   - Uses Redis streams for communication
-
-### Root Cause Analysis
-1. **Incorrect Message Routing in WebSocket Handler**:
-   - The WebSocket interface is using `send_user` which creates envelopes with `target: null` and a fixed `reply_to: "AG1:agent:GooseAgent:inbox"`
-   - This prevents proper routing of messages to the intended agent
-   - Messages are only delivered to the GooseAgent's inbox instead of being forwarded to the target agent
-
-2. **Working Implementation (ag1goose-bridge)**:
-   - Uses `delegate_with_opts` which properly sets:
-     - `target: Some(target.into())`
-     - `reply_to: Some(in_stream.to_string())`
-   - This ensures proper routing to the intended agent
-
-3. **Required Fix**:
-   - WebSocket handler needs to use `delegate` or `delegate_to_name` instead of `send_user`
-   - This will ensure proper message routing to the target agent
-
-4. **Content Propagation Path**:
-   - WebSocket message → `process_message_streaming` → `agent.reply()` → MCP Server → `delegate_with_opts`
-   - Content is preserved when proper routing is used
-
-5. **Key Observations`:
-   - The `agent_name` field is correctly set to `"ag1goose"` in outbound messages
-   - The issue only occurs with the WebSocket interface, not with the bridge
-   - Debug logs show the content is present in the WebSocket handler but lost before reaching Redis
-
-3. **Suspected Issues**:
-   - Incorrect message transformation in WebSocket handler
-   - Missing content field in the envelope creation
-   - Serialization/deserialization mismatch between components
-
-### Agent Registry Configuration
-From `orchestrator_registry.json`:
-- **Social Agent**: Handles social interactions and content processing
-- **Goose Agent**: Main agent handling WebSocket connections
-- **AG1 MCP**: Message Control Protocol server for inter-agent communication
-
-## Known Issues
-PYTHON example : pythonexample.md
-This shows wht json format and expected communications structure.
-NB NB
-
-
-### Message Format Issues
-1. **Inbox Naming Convention**
-   - All agent inboxes must follow the pattern: `AG1:agent:<AgentName>:inbox`
-   - Example: `AG1:agent:SocialAgent:inbox`
-   - The WebSocket handler was incorrectly using a hardcoded `AG1:agent:GooseAgent:inbox`
-   - **Required Change**: Update all inbox references to use the proper agent name from the configuration
-
-2. **Content Structure Mismatch"
-   - Social agent expects `content` to be a JSON object with a `text` field
-   - Current implementation sends content as a string instead of an object
-   - Error: `'str' object has no attribute 'get'`
-
-2. **JSONL Log Parsing**
-   - Partial JSON lines in logs causing parsing errors
-   - Need robust handling of incomplete JSON objects
-   - MCP client warnings in logs interfering with parsing
-
-3. **Session Management**
-   - Session cleanup not properly implemented
-   - Unused `is_ready` field in session struct
-   - `wait_reply_raw` method not being used
-
-### Error Handling
-1. **Message Processing**
-   - Incomplete error handling in message processing
-   - Need better error propagation between agents
-   - Missing retry mechanisms for failed operations
-
-2. **Timeout Handling**
-   - Inconsistent timeout behavior across agents
-   - Need standardized timeout values
-   - Missing timeout recovery strategies
 
 ## Wish List / Future Tasks
 
 ### Core Improvements
 1. **Message Format Standardization**
-   - Enforce strict envelope format validation
-   - Add comprehensive message schema validation
-   - Implement proper type checking for content fields
+   -
 
 2. **Error Handling Framework**
    - Standardized error codes and messages
@@ -330,16 +239,6 @@ NB NB
    - Add session state tracking
    - Improve session cleanup procedures
 
-### Agent-Specific Tasks
-1. **Social Agent**
-   - Fix content format handling
-   - Add proper message validation
-   - Implement better error recovery
-
-2. **Heartbeat Agent**
-   - Add proper message format validation
-   - Implement health check reporting
-   - Add proper error handling
 
 ### Infrastructure Improvements
 1. **Logging**
@@ -370,20 +269,6 @@ NB NB
 
 ## Priority Tasks
 
-1. **High Priority**
-   - Fix message format issues in social agent
-   - Implement proper error handling
-   - Standardize session management
-
-2. **Medium Priority**
-   - Add comprehensive logging
-   - Implement message validation
-   - Add proper testing
-
-3. **Low Priority**
-   - Documentation improvements
-   - Performance optimizations
-   - Cleanup unused code
 
 ## Notes
 - All changes should maintain backward compatibility where possible
