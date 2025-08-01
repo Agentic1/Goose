@@ -39,6 +39,9 @@ pub struct Envelope {
     #[serde(default)] pub meta:           serde_json::Value,
     #[serde(default)] pub envelope_id:    Option<String>,
     #[serde(default)] pub correlation_id: Option<String>,
+    #[serde(default)] pub consumer_group: Option<String>,
+    #[serde(default)] pub consumer_id:    Option<String>,
+    #[serde(default)] pub delivery_count: Option<u32>,
 }
 
 pub struct Bus {
@@ -146,6 +149,81 @@ impl Bus {
             return Ok(Some(env));
         }
         Ok(None)
+    }
+
+    /// Create a consumer group for a stream. Succeeds if the group already exists.
+    pub async fn create_consumer_group(&self, stream: &str, group: &str) -> Result<(), BusError> {
+        let mut conn = self.client.get_async_connection().await?;
+        let result: redis::RedisResult<()> = redis::cmd("XGROUP")
+            .arg("CREATE")
+            .arg(stream)
+            .arg(group)
+            .arg("0-0")
+            .arg("MKSTREAM")
+            .query_async(&mut conn)
+            .await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                // BUSYGROUP indicates the group already exists
+                if let redis::ErrorKind::ExtensionError = e.kind() {
+                    if e.code() == Some("BUSYGROUP") {
+                        return Ok(());
+                    }
+                }
+                Err(BusError::Redis(e))
+            }
+        }
+    }
+
+    /// Blocking read from a consumer group
+    pub async fn recv_block_group(
+        &self,
+        stream: &str,
+        group: &str,
+        consumer: &str,
+        block_ms: u64,
+    ) -> Result<Option<Envelope>, BusError> {
+        let mut conn = self.client.get_async_connection().await?;
+        let reply: redis::Value = redis::cmd("XREADGROUP")
+            .arg("GROUP")
+            .arg(group)
+            .arg(consumer)
+            .arg("BLOCK")
+            .arg(block_ms)
+            .arg("COUNT")
+            .arg(1)
+            .arg("STREAMS")
+            .arg(stream)
+            .arg(">")
+            .query_async(&mut conn)
+            .await?;
+
+        if let Some((id, env_json)) = extract_env(&reply) {
+            let mut env: Envelope = serde_json::from_str(&env_json)?;
+            env.envelope_id = Some(id.clone());
+            env.consumer_group = Some(group.to_string());
+            env.consumer_id = Some(consumer.to_string());
+            return Ok(Some(env));
+        }
+        Ok(None)
+    }
+
+    /// Acknowledge that a message has been processed
+    pub async fn ack_message(
+        &self,
+        stream: &str,
+        group: &str,
+        message_id: &str,
+    ) -> Result<(), BusError> {
+        let mut conn = self.client.get_async_connection().await?;
+        redis::cmd("XACK")
+            .arg(stream)
+            .arg(group)
+            .arg(message_id)
+            .query_async::<_, ()>(&mut conn)
+            .await?;
+        Ok(())
     }
 }
 

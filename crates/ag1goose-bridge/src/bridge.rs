@@ -234,6 +234,9 @@ impl Bridge {
             meta: json!({ "x_stream_key": self.cfg.inbox }),
             envelope_id: Some(uuid::Uuid::new_v4().to_string()),
             correlation_id: Some(cid),
+            consumer_group: None,
+            consumer_id: None,
+            delivery_count: None,
         };
         
         if let Err(e) = self.bus.send(&reply_to, &response_env).await {

@@ -47,6 +47,9 @@ pub fn create_envelope(content: serde_json::Value, role: &str, meta: Option<serd
         headers: std::collections::HashMap::new(),
         envelope_id: None,
         correlation_id: None,
+        consumer_group: None,
+        consumer_id: None,
+        delivery_count: None,
     }
 }
 mod registry;
@@ -124,15 +127,13 @@ pub async fn delegate_with_opts(
     println!("[AG1_meta] Creating new Bus instance");
     let bus = Bus::new(redis_url)?;
     println!("[AG1_meta] Bus instance created");
+    let group = "ag1_meta";
+    let consumer_id = Uuid::new_v4().to_string();
+    if let Err(e) = bus.create_consumer_group(in_stream, group).await {
+        println!("[AG1_meta] failed to create consumer group: {}", e);
+    }
     let cid = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
-
-    println!("[AG1_meta] Getting tail_id for stream: {}", in_stream);
-    let mut last_id = bus.tail_id(in_stream).await.unwrap_or_else(|e| {
-        println!("[WARN] Failed to get tail_id: {}", e);
-        "0-0".to_string()
-    });
-    println!("[AG1_meta] Starting to listen from id: {}", last_id);
 
     println!("[AG1_meta] Creating envelope");
     // Ensure content is properly formatted as an object with a text field
@@ -186,6 +187,9 @@ pub async fn delegate_with_opts(
         meta: if meta.is_object() { meta } else { serde_json::json!({}) },
         envelope_id: Some(cid.clone()),
         correlation_id: Some(cid.clone()),
+        consumer_group: None,
+        consumer_id: None,
+        delivery_count: None,
     };
 
     println!("[AG1_meta] Sending envelope to stream: {}", out_stream);
@@ -208,12 +212,17 @@ pub async fn delegate_with_opts(
         }
         let block = slice_ms.min(timeout_ms - elapsed);
 
-        if let Some(reply) = bus.recv_block(in_stream, &last_id, block).await? {
-            if let Some(id) = &reply.envelope_id {
-                last_id = id.clone();
-            }
+        if let Some(reply) = bus
+            .recv_block_group(in_stream, group, &consumer_id, block)
+            .await?
+        {
             if reply.correlation_id.as_deref() == Some(&cid) {
+                if let Some(id) = &reply.envelope_id {
+                    let _ = bus.ack_message(in_stream, group, id).await;
+                }
                 return Ok(reply);
+            } else if let Some(id) = &reply.envelope_id {
+                let _ = bus.ack_message(in_stream, group, id).await;
             }
         }
     }

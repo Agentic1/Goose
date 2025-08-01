@@ -771,8 +771,11 @@ async fn run_bus_listener(state: AppState, cfg: BusConfig) -> Result<()> {
         };
 
         println!("starting bus listener");
-        // Start reading from the beginning of the stream (0-0) instead of new messages only ($)
-        let mut last_id = "0-0".to_string();
+        let group = "goose_bus";
+        let consumer_id = format!("{}-{}", cfg.agent_name, uuid::Uuid::new_v4());
+        if let Err(e) = bus.create_consumer_group(&cfg.inbox, group).await {
+            println!("failed to create consumer group: {}", e);
+        }
         println!("📡 Listening for messages on stream: {}", cfg.inbox);
         
         // Debug: Print Redis connection details
@@ -783,10 +786,11 @@ async fn run_bus_listener(state: AppState, cfg: BusConfig) -> Result<()> {
         loop {
             println!("\n--- New Poll Cycle ---");
             println!("⏳ Waiting for message on stream: {}", cfg.inbox);
-            println!("🔍 Last message ID: {}", last_id);
-            
+
             let start = std::time::Instant::now();
-            let result = bus.recv_block(&cfg.inbox, &last_id, cfg.timeout_ms).await;
+            let result = bus
+                .recv_block_group(&cfg.inbox, group, &consumer_id, cfg.timeout_ms)
+                .await;
             let elapsed = start.elapsed();
             
             println!("⏱️  Redis call took: {:?}", elapsed);
@@ -799,13 +803,12 @@ async fn run_bus_listener(state: AppState, cfg: BusConfig) -> Result<()> {
                     println!("Envelope content: {:?}", env.content);
                     
                     backoff = 1;
-                    if let Some(id) = &env.envelope_id {
-                        println!("Updating last message ID: {}", id);
-                        last_id = id.clone();
-                    }
                     
                     if env.role != "user" {
                         println!("Skipping non-user message with role: {}", env.role);
+                        if let Some(id) = &env.envelope_id {
+                            let _ = bus.ack_message(&cfg.inbox, group, id).await;
+                        }
                         continue;
                     }
                     println!("📝 Processing message from envelope");
@@ -899,6 +902,9 @@ async fn run_bus_listener(state: AppState, cfg: BusConfig) -> Result<()> {
                                 meta: serde_json::json!({}),
                                 envelope_id: env.correlation_id.clone(),
                                 correlation_id: env.correlation_id.clone(),
+                                consumer_group: None,
+                                consumer_id: None,
+                                delivery_count: None,
                             };
                             
                             println!("📤 Sending response to: {}", reply_to);
@@ -908,6 +914,9 @@ async fn run_bus_listener(state: AppState, cfg: BusConfig) -> Result<()> {
                                 Ok(_) => println!("✅ Successfully sent response to {}", reply_to),
                                 Err(e) => error!("❌ Failed to send response to {}: {}", reply_to, e),
                             };
+                            if let Some(id) = &env.envelope_id {
+                                let _ = bus.ack_message(&cfg.inbox, group, id).await;
+                            }
                         }
                         Err(e) => {
                             error!("bus message error: {}", e);
