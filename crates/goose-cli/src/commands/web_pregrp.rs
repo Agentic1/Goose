@@ -191,8 +191,6 @@ pub async fn handle_web(port: u16, host: String, open: bool) -> Result<()> {
     if open {
         // Open browser
         let url = format!("http://{}", addr);
-        let reply_to = format!("AG1:edge:generic_relay:{}:response", "session_id");
-        println!("[WEBSOCKET] Generated reply_to address: {}", reply_to);
         if let Err(e) = webbrowser::open(&url) {
             eprintln!("Failed to open browser: {}", e);
         }
@@ -337,9 +335,9 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             session_id,
                             ..
                         }) => {
-                            println!("[WEBSOCKET] Received message for session: {}", session_id);
-                            println!("[WEBSOCKET] Message content: {:?}", content);
-                            
+                            println!("WebSocket Message parsed successfully");
+                            println!("WebSocket Content: {}", content);
+                            println!("WebSocket Session ID: {}", session_id);
                             // Get session file path from session_id
                             let session_file = match session::get_path(session::Identifier::Name(
                                 session_id.clone(),
@@ -773,25 +771,8 @@ async fn run_bus_listener(state: AppState, cfg: BusConfig) -> Result<()> {
         };
 
         println!("starting bus listener");
-        // Use the same consumer group as ag1_meta for proper message sharing
-        let group = "ag1_meta";
-        let consumer_id = format!("{}--{}", cfg.agent_name, uuid::Uuid::new_v4());
-        
-        println!("[WEBSOCKET] Setting up consumer group for session: {}", cfg.agent_name);
-        println!("[WEBSOCKET] Stream: {}", &cfg.inbox);
-        println!("[WEBSOCKET] Consumer Group: {}", &group);
-        println!("[WEBSOCKET] Consumer ID: {}", &consumer_id);
-        
-        if let Err(e) = bus.create_consumer_group(&cfg.inbox, group).await {
-            if !e.to_string().contains("BUSYGROUP") {
-                eprintln!("[WEBSOCKET] ❌ Failed to create consumer group: {}", e);
-            } else {
-                println!("[WEBSOCKET] ℹ️ Consumer group already exists");
-            }
-        } else {
-            println!("[WEBSOCKET] ✅ Successfully created consumer group");
-        }
-        
+        // Start reading from the beginning of the stream (0-0) instead of new messages only ($)
+        let mut last_id = "0-0".to_string();
         println!("📡 Listening for messages on stream: {}", cfg.inbox);
         
         // Debug: Print Redis connection details
@@ -799,35 +780,13 @@ async fn run_bus_listener(state: AppState, cfg: BusConfig) -> Result<()> {
         println!("🔌 Inbox stream: {}", cfg.inbox);
         println!("🔌 Timeout: {}ms", cfg.timeout_ms);
         
-        // Create an Arc to share the bus connection
-        let bus_arc = std::sync::Arc::new(bus);
-        
         loop {
             println!("\n--- New Poll Cycle ---");
             println!("⏳ Waiting for message on stream: {}", cfg.inbox);
-
-            let start = std::time::Instant::now();
-            println!("[WEBSOCKET] Waiting for messages from Redis...");
-            println!("[WEBSOCKET] Stream: {}", &cfg.inbox);
-            println!("[WEBSOCKET] Consumer Group: {}", &group);
-            println!("[WEBSOCKET] Consumer ID: {}", &consumer_id);
+            println!("🔍 Last message ID: {}", last_id);
             
-            let result = bus_arc
-                .recv_block_group(&cfg.inbox, group, &consumer_id, cfg.timeout_ms)
-                .await
-                .map(|opt_env| {
-                    if let Some(ref env) = opt_env {
-                        println!("\n[WEBSOCKET] ✅ Received message from Redis");
-                        println!("[WEBSOCKET] Envelope ID: {:?}", env.envelope_id);
-                        println!("[WEBSOCKET] Correlation ID: {:?}", env.correlation_id);
-                        println!("[WEBSOCKET] Role: {}", env.role);
-                        println!("[WEBSOCKET] Reply To: {:?}", env.reply_to);
-                        println!("[WEBSOCKET] Content: {}", env.content);
-                    } else {
-                        println!("[WEBSOCKET] No messages received (timeout)");
-                    }
-                    opt_env
-                });
+            let start = std::time::Instant::now();
+            let result = bus.recv_block(&cfg.inbox, &last_id, cfg.timeout_ms).await;
             let elapsed = start.elapsed();
             
             println!("⏱️  Redis call took: {:?}", elapsed);
@@ -840,38 +799,19 @@ async fn run_bus_listener(state: AppState, cfg: BusConfig) -> Result<()> {
                     println!("Envelope content: {:?}", env.content);
                     
                     backoff = 1;
-                    
-                    // Skip processing if this is a message we already processed
-                    // or a reply to our own message (to prevent loops)
-                    if env.envelope_type.as_deref() == Some("message_reply") {
-                        // Check if this is a reply to a message we sent
-                        if let Some(correlation_id) = &env.correlation_id {
-                            // If the correlation ID matches our message pattern, skip it
-                            if correlation_id.starts_with(&cfg.agent_name) {
-                                println!("🔄 Skipping message to prevent loop (correlation_id: {})", correlation_id);
-                                if let Some(id) = &env.envelope_id {
-                                    if let Err(e) = bus_arc.as_ref().ack_message(&cfg.inbox, group, id).await {
-                                        error!("❌ Failed to acknowledge looped message {}: {}", id, e);
-                                    }
-                                }
-                                continue;
-                            }
-                        }
+                    if let Some(id) = &env.envelope_id {
+                        println!("Updating last message ID: {}", id);
+                        last_id = id.clone();
                     }
                     
-                    // Allow both 'user' and 'agent' roles to be processed
-                    if env.role != "user" && env.role != "agent" && env.role != "assistant" {
-                        println!("-->>>Skipping message with unsupported role: {}", env.role);
-                        if let Some(id) = &env.envelope_id {
-                            if let Err(e) = bus_arc.as_ref().ack_message(&cfg.inbox, group, id).await {
-                                error!("❌ Failed to acknowledge skipped message {}: {}", id, e);
-                            }
-                        }
+                    if env.role != "user" {
+                        println!("Skipping non-user message with role: {}", env.role);
                         continue;
                     }
                     println!("📝 Processing message from envelope");
                     println!("📦 Envelope content type: {:?}", env.content); // Add content type logging
-                                        
+                    println!("📦 Envelope content raw: {:?}", env.content); // Add raw content logging
+                    
                     // Normalize the content to ensure it has a text field
                     use serde_json::{json, Value};
                     let normalized_content = match env.content {
@@ -935,7 +875,7 @@ async fn run_bus_listener(state: AppState, cfg: BusConfig) -> Result<()> {
                     };
                     
                     println!("🔄 Processing message through agent");
-                    match process_bus_message(&state.agent, session_messages, text, &bus_arc).await {
+                    match process_bus_message(&state.agent, session_messages, text).await {
                         Ok(response) => {
                             println!("✅ Successfully processed message");
                             
@@ -959,28 +899,15 @@ async fn run_bus_listener(state: AppState, cfg: BusConfig) -> Result<()> {
                                 meta: serde_json::json!({}),
                                 envelope_id: env.correlation_id.clone(),
                                 correlation_id: env.correlation_id.clone(),
-                                consumer_group: None,
-                                consumer_id: None,
-                                delivery_count: None,
                             };
                             
                             println!("📤 Sending response to: {}", reply_to);
                             println!("Response envelope: {:?}", reply_env);
-                            match bus_arc.as_ref().send(&reply_to, &reply_env).await {
-                                Ok(_) => {
-                                    println!("✅ Successfully sent response to {}", reply_to);
-                                    // Acknowledge the message using bus_arc
-                                    if let Some(id) = &env.envelope_id {
-                                        if let Err(e) = bus_arc.as_ref().ack_message(&cfg.inbox, group, id).await {
-                                            error!("❌ Failed to acknowledge message {}: {}", id, e);
-                                        }
-                                    }
-                                },
+                            
+                            match bus.send(&reply_to, &reply_env).await {
+                                Ok(_) => println!("✅ Successfully sent response to {}", reply_to),
                                 Err(e) => error!("❌ Failed to send response to {}: {}", reply_to, e),
                             };
-                            if let Some(id) = &env.envelope_id {
-                                let _ = bus_arc.as_ref().ack_message(&cfg.inbox, group, id).await;
-                            }
                         }
                         Err(e) => {
                             error!("bus message error: {}", e);
@@ -1004,7 +931,6 @@ async fn process_bus_message(
     agent: &Agent,
     session_messages: Arc<RwLock<Vec<GooseMessage>>>,
     content: String,
-    bus: &std::sync::Arc<Bus>,
 ) -> Result<String> {
     use futures::StreamExt;
     use goose::agents::SessionConfig;
@@ -1059,72 +985,10 @@ async fn process_bus_message(
         match item {
             Ok(AgentEvent::Message(msg)) => {
                 println!("📝 Processing agent message chunk #{}", message_count);
-                println!("📦 Message content variants ({}):", msg.content.len());
-                
-                // Process all content variants
-                for (i, c) in msg.content.iter().enumerate() {
-                    match c {
-                        goose::message::MessageContent::Text(t) => {
-                            println!("   {}. Text ({} chars): {}", i+1, t.text.len(), t.text);
-                            response.push_str(&t.text);
-                        },
-                        goose::message::MessageContent::ToolRequest(tr) => {
-                            println!("   {}. Tool Request: {} - {}", i+1, tr.id, serde_json::to_string(&tr.tool_call).unwrap_or_default());
-                        },
-                        goose::message::MessageContent::ToolResponse(tr) => {
-                            println!("   {}. Tool Response: {} - {}", i+1, tr.id, serde_json::to_string(&tr.tool_result).unwrap_or_default());
-                        },
-                        goose::message::MessageContent::Thinking(thinking) => {
-                            println!("   {}. Thinking: {} (signature: {})", i+1, thinking.thinking, thinking.signature);
-                            
-                            // Create a thinking message envelope for Aetherbus
-                            // Generate new IDs for this thinking message
-                            let envelope_id = Some(uuid::Uuid::new_v4().to_string());
-                            let correlation_id = envelope_id.clone();
-                            
-                            let thinking_envelope = Envelope {
-                                role: "agent".to_string(),
-                                content: serde_json::json!({ 
-                                    "text": thinking.thinking,
-                                    "type": "thinking",
-                                    "signature": thinking.signature
-                                }),
-                                agent_name: Some("goose".to_string()),
-                                target: Some("frontend".to_string()),
-                                reply_to: None,
-                                envelope_type: Some("thinking".to_string()),
-                                envelope_id: envelope_id,
-                                correlation_id: correlation_id,
-                                timestamp: Some(chrono::Utc::now().to_rfc3339()),
-                                auth_signature: None,
-                                headers: Default::default(),
-                                meta: serde_json::json!({}),
-                                consumer_group: None,
-                                consumer_id: None,
-                                delivery_count: None,
-                                // Required fields
-                                session_code: None,
-                                task_id: None,
-                                billing_hint: None,
-                                usage: serde_json::json!({}),
-                                trace: vec![],
-                                tools_used: vec![],
-                                user_id: None,
-                            };
-                            
-                            // Send thinking message to Aetherbus
-                            if let Err(e) = bus.as_ref().send("aetherbus:thinking", &thinking_envelope).await {
-                                error!("Failed to send thinking message to Aetherbus: {}", e);
-                            }
-                        },
-                        goose::message::MessageContent::RedactedThinking(redacted) => {
-                            println!("   {}. Redacted Thinking: [data redacted, length: {}]", i+1, redacted.data.len());
-                            // Log the redacted thinking message to the console
-                            println!("   {}. Redacted Thinking: [data redacted, length: {}]", i+1, redacted.data.len());
-                        },
-                        other => {
-                            println!("   {}. Other variant: {:?}", i+1, other);
-                        }
+                for c in &msg.content {
+                    if let goose::message::MessageContent::Text(t) = c {
+                        response.push_str(&t.text);
+                        println!("📝 Appended text chunk ({} chars)", t.text.len());
                     }
                 }
                 
@@ -1133,31 +997,6 @@ async fn process_bus_message(
                 let mut msgs = session_messages.write().await;
                 msgs.push(msg);
                 println!("💾 Saved assistant message to session ({} messages total)", msgs.len());
-                
-                // Print the last message for debugging
-                if let Some(last_msg) = msgs.last() {
-                    println!("📝 Last message content: {:#?}", last_msg);
-                    
-                    // Log all content variants of the last message
-                    println!("📦 Last message content variants ({}):", last_msg.content.len());
-                    for (i, content) in last_msg.content.iter().enumerate() {
-                        match content {
-                            goose::message::MessageContent::Text(t) => {
-                                println!("   {}. Text ({} chars): {}", i+1, t.text.len(), t.text);
-                            },
-                            goose::message::MessageContent::ToolRequest(tr) => {
-                                println!("   {}. Tool Request: {} - {}", i+1, tr.id, serde_json::to_string(&tr.tool_call).unwrap_or_default());
-                            },
-                            goose::message::MessageContent::ToolResponse(tr) => {
-                                println!("   {}. Tool Response: {} - {}", i+1, tr.id, serde_json::to_string(&tr.tool_result).unwrap_or_default());
-                            },
-                            other => {
-                                println!("   {}. Other: {:?}", i+1, other);
-                            }
-                        }
-                    }
-                }
-                
                 println!("🔓 Released write lock");
             },
             Ok(event) => {

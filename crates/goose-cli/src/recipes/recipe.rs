@@ -3,7 +3,7 @@ use crate::recipes::print_recipe::{
     print_required_parameters_for_template,
 };
 use crate::recipes::search_recipe::retrieve_recipe_file;
-use crate::recipes::secret_discovery::{discover_recipe_secrets, SecretRequirement};
+use crate::recipes::secret_management::{discover_recipe_secrets, SecretRequirement};
 use anyhow::Result;
 use goose::config::Config;
 use goose::recipe::build_recipe::{

@@ -47,9 +47,6 @@ pub fn create_envelope(content: serde_json::Value, role: &str, meta: Option<serd
         headers: std::collections::HashMap::new(),
         envelope_id: None,
         correlation_id: None,
-        consumer_group: None,
-        consumer_id: None,
-        delivery_count: None,
     }
 }
 mod registry;
@@ -61,39 +58,21 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 use chrono::Utc;
 
-/// Delegates a message to an agent with the given name and options.
+
 pub async fn delegate_to_name_with_opts(
     redis_url: &str,
-    registry: &Registry,
-    agent_name: &str,
+    reg: &Registry,
+    target_name: &str,
     content: serde_json::Value,
     meta: serde_json::Value,
     role: &str,
     envelope_type: &str,
     timeout_ms: u64,
 ) -> Result<Envelope> {
-    println!("[AG1_META] Delegating to agent: {}", agent_name);
-    println!("[AG1_META] Content: {}", serde_json::to_string_pretty(&content).unwrap_or_default());
-    println!("[AG1_META] Meta: {}", serde_json::to_string_pretty(&meta).unwrap_or_default());
-    println!("[AG1_meta] delegate_to_name_with_opts - Looking up agent: {}", agent_name);
-    
-    // List all available agents for debugging
-    println!("[AG1_meta] Available agents in registry:");
-    for info in registry.list() {
-        println!("  - {} (inbox: {})", info.name, info.inbox);
-    }
-    
-    // Look up the agent in the registry
-    let info = registry.get(agent_name)
-        .ok_or_else(|| {
-            println!("[AG1_meta] ERROR: Unknown agent: {}", agent_name);
-            anyhow::anyhow!("unknown agent: {}", agent_name)
-        })?;
-        
-    println!("[AG1_meta] Found agent: {} -> {}", agent_name, info.inbox);
-    
+    let info = reg.get(target_name)
+        .ok_or_else(|| anyhow::anyhow!("unknown agent: {target_name}"))?;
     delegate_with_opts(
-        redis_url, &info.inbox, &registry.goose_inbox, agent_name,
+        redis_url, &info.inbox, &reg.goose_inbox, target_name,
         content, meta, role, envelope_type, timeout_ms
     ).await
 }
@@ -107,22 +86,8 @@ pub async fn delegate_to_name(
     meta: serde_json::Value,
     timeout_ms: u64,
 ) -> Result<Envelope> {
-    println!("[AG1_meta] delegate_to_name - Looking up agent: {}", target_name);
-    
-    // List all available agents for debugging
-    println!("[AG1_meta] Available agents in registry:");
-    for info in reg.list() {
-        println!("  - {} (inbox: {})", info.name, info.inbox);
-    }
-    
     let info = reg.get(target_name)
-        .ok_or_else(|| {
-            println!("[AG1_meta] ERROR: Unknown agent: {}", target_name);
-            anyhow::anyhow!("unknown agent: {}", target_name)
-        })?;
-        
-    println!("[AG1_meta] Found agent: {} -> {}", target_name, info.inbox);
-    
+        .ok_or_else(|| anyhow::anyhow!("unknown agent: {target_name}"))?;
     delegate(redis_url, &info.inbox, &reg.goose_inbox, target_name, content, meta, timeout_ms).await
 }
 
@@ -131,22 +96,12 @@ pub async fn delegate_with_opts(
     out_stream: &str,
     in_stream: &str,
     target: &str,
-    content: serde_json::Value,
+    mut content: serde_json::Value,
     meta: serde_json::Value,
     role: &str,
     envelope_type: &str,
     timeout_ms: u64,
 ) -> Result<Envelope> {
-    println!("[AG1_meta] delegate_with_opts - Starting delegation");
-    println!("  - redis_url: {}", redis_url);
-    println!("  - out_stream: {}", out_stream);
-    println!("  - in_stream: {}", in_stream);
-    println!("  - target: {}", target);
-    println!("  - content: {}", content);
-    println!("  - meta: {}", meta);
-    println!("  - role: {}", role);
-    println!("  - envelope_type: {}", envelope_type);
-    println!("  - timeout_ms: {}", timeout_ms);
     println!("[AG1_meta] delegate_with_opts called with:");
     println!("  - redis_url: {}", redis_url);
     println!("  - out_stream: {}", out_stream);
@@ -169,13 +124,15 @@ pub async fn delegate_with_opts(
     println!("[AG1_meta] Creating new Bus instance");
     let bus = Bus::new(redis_url)?;
     println!("[AG1_meta] Bus instance created");
-    let group = "ag1_meta";
-    let consumer_id = Uuid::new_v4().to_string();
-    if let Err(e) = bus.create_consumer_group(in_stream, group).await {
-        println!("[AG1_meta] failed to create consumer group: {}", e);
-    }
     let cid = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
+
+    println!("[AG1_meta] Getting tail_id for stream: {}", in_stream);
+    let mut last_id = bus.tail_id(in_stream).await.unwrap_or_else(|e| {
+        println!("[WARN] Failed to get tail_id: {}", e);
+        "0-0".to_string()
+    });
+    println!("[AG1_meta] Starting to listen from id: {}", last_id);
 
     println!("[AG1_meta] Creating envelope");
     // Ensure content is properly formatted as an object with a text field
@@ -229,9 +186,6 @@ pub async fn delegate_with_opts(
         meta: if meta.is_object() { meta } else { serde_json::json!({}) },
         envelope_id: Some(cid.clone()),
         correlation_id: Some(cid.clone()),
-        consumer_group: None,
-        consumer_id: None,
-        delivery_count: None,
     };
 
     println!("[AG1_meta] Sending envelope to stream: {}", out_stream);
@@ -254,17 +208,12 @@ pub async fn delegate_with_opts(
         }
         let block = slice_ms.min(timeout_ms - elapsed);
 
-        if let Some(reply) = bus
-            .recv_block_group(in_stream, group, &consumer_id, block)
-            .await?
-        {
+        if let Some(reply) = bus.recv_block(in_stream, &last_id, block).await? {
+            if let Some(id) = &reply.envelope_id {
+                last_id = id.clone();
+            }
             if reply.correlation_id.as_deref() == Some(&cid) {
-                if let Some(id) = &reply.envelope_id {
-                    let _ = bus.ack_message(in_stream, group, id).await;
-                }
                 return Ok(reply);
-            } else if let Some(id) = &reply.envelope_id {
-                let _ = bus.ack_message(in_stream, group, id).await;
             }
         }
     }

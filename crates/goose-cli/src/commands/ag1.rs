@@ -37,7 +37,7 @@ pub enum Ag1Sub {
         role: String,
         #[arg(long, default_value = "message")]        // NEW
         envelope_type: String,
-        #[arg(long, default_value_t = 8000)]
+        #[arg(long, default_value_t = 30000)]
         timeout_ms: u64,
     },
 }
@@ -56,18 +56,71 @@ pub async fn run(args: Ag1Cmd) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(a)?);
         }
         Ag1Sub::Delegate { name, content, meta, role, envelope_type, timeout_ms } => {
-            let content_json: serde_json::Value = serde_json::from_str(&content)?;
+            let start_time = std::time::Instant::now();
+            println!("\n[AG1_DELEGATE] Starting delegation to agent: {}", name);
+            println!("[AG1_DELEGATE] Redis: {}", args.redis);
+            println!("[AG1_DELEGATE] Role: {}, Envelope Type: {}", role, envelope_type);
+            println!("[AG1_DELEGATE] Timeout: {}ms", timeout_ms);
+            
+            // Parse content JSON
+            let content_json: serde_json::Value = serde_json::from_str(&content)
+                .map_err(|e| anyhow::anyhow!("Failed to parse content as JSON: {}", e))?;
+            println!("[AG1_DELEGATE] Content JSON parsed successfully ({} bytes)", content.len());
+            
+            // Parse meta JSON if provided
             let meta_json: serde_json::Value = match meta {
-                Some(s) => serde_json::from_str(&s)?,
-                None => serde_json::json!({}),
+                Some(ref s) => {
+                    let json = serde_json::from_str(s)
+                        .map_err(|e| anyhow::anyhow!("Failed to parse meta as JSON: {}", e))?;
+                    println!("[AG1_DELEGATE] Meta JSON parsed successfully ({} bytes)", s.len());
+                    json
+                },
+                None => {
+                    println!("[AG1_DELEGATE] No meta provided, using empty object");
+                    serde_json::json!({})
+                },
             };
-            let reply = ag1_meta::delegate_to_name_with_opts(
-                &args.redis, &reg, &name,
-                content_json, meta_json,
-                &role, &envelope_type,
+            
+            // Log registry state
+            let agents: Vec<_> = reg.list().iter().map(|a| &a.name).collect();
+            println!("[AG1_DELEGATE] Registry contains {} agents: {:?}", agents.len(), agents);
+            if !agents.iter().any(|a| a == &&name) {
+                println!("[AG1_DELEGATE] WARNING: Agent '{}' not found in registry", name);
+            }
+            
+            // Make the delegation call
+            println!("[AG1_DELEGATE] Calling delegate_to_name_with_opts...");
+            let delegate_start = std::time::Instant::now();
+            
+            let reply = match ag1_meta::delegate_to_name_with_opts(
+                &args.redis, 
+                &reg, 
+                &name,
+                content_json, 
+                meta_json,
+                &role, 
+                &envelope_type,
                 timeout_ms
-            ).await?;
-            println!("xxxx {}", serde_json::to_string_pretty(&reply)?);
+            ).await {
+                Ok(reply) => reply,
+                Err(e) => {
+                    println!("[AG1_DELEGATE] ERROR in delegate_to_name_with_opts: {}", e);
+                    return Err(e);
+                }
+            };
+            
+            let delegate_duration = delegate_start.elapsed();
+            println!("[AG1_DELEGATE] delegate_to_name_with_opts completed in {:?}", delegate_duration);
+            
+            // Format and print the reply
+            let reply_str = serde_json::to_string_pretty(&reply)
+                .unwrap_or_else(|_| "[Failed to format reply]".to_string());
+            println!("\n[AG1_DELEGATE] === DELEGATION RESULT ({} bytes) ===", reply_str.len());
+            println!("--->>> {}", reply_str);
+            println!("[AG1_DELEGATE] ====================================\n");
+            
+            let total_duration = start_time.elapsed();
+            println!("[AG1_DELEGATE] Total delegation time: {:?}", total_duration);
         }
     }
     Ok(())

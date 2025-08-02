@@ -192,15 +192,33 @@ if __name__ == "__main__":
    - Handle graceful session termination
    - Persist important session data if needed
 
-### Thinking Indicator Implementation
+## Message Type Specification
 
-#### Message Format
+### Thinking Indicator
+
+#### WebSocket Format
 ```json
 {
   "type": "thinking",
   "content": "Thinking...",
   "timestamp": "2025-07-30T07:45:00Z",
   "session_id": "session-12345"
+}
+```
+
+#### Bus Message Envelope Format
+When sending over the bus, thinking messages should be wrapped in an envelope with a `message_type` field:
+
+```json
+{
+  "envelope_id": "envelope-12345",
+  "message_type": "thinking",
+  "content": {
+    "message": "Thinking...",
+    "timestamp": "2025-07-30T07:45:00Z"
+  },
+  "session_id": "session-12345",
+  "correlation_id": "corr-67890"
 }
 ```
 

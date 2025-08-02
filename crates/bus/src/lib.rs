@@ -77,27 +77,41 @@ impl Bus {
 
     /// XADD <stream> * env <json>
     pub async fn send(&self, stream: &str, env: &Envelope) -> Result<String, BusError> {
-        println!("[BUS_DEBUG] Attempting to send message to Redis stream: {}", stream);
-        println!("[BUS_DEBUG] Message content: {:#?}", env);
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        println!("\n[BUS_DEBUG][{}] SENDING MESSAGE", timestamp);
+        println!("[BUS_DEBUG] Stream: {}", stream);
+        println!("[BUS_DEBUG] Envelope ID: {:?}", env.envelope_id);
+        println!("[BUS_DEBUG] Correlation ID: {:?}", env.correlation_id);
+        println!("[BUS_DEBUG] Role: {}", env.role);
+        println!("[BUS_DEBUG] Agent: {:?}", env.agent_name);
+        println!("[BUS_DEBUG] Target: {:?}", env.target);
+        println!("[BUS_DEBUG] Reply To: {:?}", env.reply_to);
+        println!("[BUS_DEBUG] Envelope Type: {:?}", env.envelope_type);
+        
+        // Log the full envelope for debugging
+        if let Ok(env_json) = serde_json::to_string_pretty(&env) {
+            println!("[BUS_DEBUG] Full envelope: {}", env_json);
+        }
+        println!("[BUS_DEBUG] Content: {}", env.content);
         
         let mut conn = match self.client.get_async_connection().await {
             Ok(conn) => {
-                println!("[BUS_DEBUG] Successfully connected to Redis");
+                println!("[BUS_DEBUG] ✅ Connected to Redis");
                 conn
             }
             Err(e) => {
-                println!("[BUS_ERROR] Failed to connect to Redis: {}", e);
+                println!("[BUS_ERROR] ❌ Redis connection failed: {}", e);
                 return Err(BusError::Redis(e));
             }
         };
         
         let json = match serde_json::to_string(env) {
             Ok(json) => {
-                println!("[BUS_DEBUG] Successfully serialized envelope to JSON");
+                println!("[BUS_DEBUG] ✅ Envelope serialized to JSON ({} bytes)", json.len());
                 json
             }
             Err(e) => {
-                println!("[BUS_ERROR] Failed to serialize envelope to JSON: {}", e);
+                println!("[BUS_ERROR] ❌ Failed to serialize envelope: {}", e);
                 return Err(BusError::Json(e));
             }
         };
@@ -153,25 +167,47 @@ impl Bus {
 
     /// Create a consumer group for a stream. Succeeds if the group already exists.
     pub async fn create_consumer_group(&self, stream: &str, group: &str) -> Result<(), BusError> {
-        let mut conn = self.client.get_async_connection().await?;
-        let result: redis::RedisResult<()> = redis::cmd("XGROUP")
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        println!("\n[BUS_DEBUG][{}] CREATING CONSUMER GROUP", timestamp);
+        println!("[BUS_DEBUG] Stream: {}", stream);
+        println!("[BUS_DEBUG] Group: {}", group);
+        
+        let mut conn = match self.client.get_async_connection().await {
+            Ok(conn) => {
+                println!("[BUS_DEBUG] ✅ Connected to Redis");
+                conn
+            }
+            Err(e) => {
+                println!("[BUS_DEBUG] ❌ Failed to connect to Redis: {}", e);
+                return Err(BusError::Redis(e));
+            }
+        };
+        
+        println!("[BUS_DEBUG] Executing XGROUP CREATE: XGROUP CREATE {} {} 0 MKSTREAM", stream, group);
+        
+        let result: Result<(), redis::RedisError> = redis::cmd("XGROUP")
             .arg("CREATE")
             .arg(stream)
             .arg(group)
-            .arg("0-0")
+            .arg("0")
             .arg("MKSTREAM")
             .query_async(&mut conn)
             .await;
+            
         match result {
-            Ok(_) => Ok(()),
+            Ok(_) => {
+                println!("[BUS_DEBUG] ✅ Successfully created consumer group");
+                Ok(())
+            }
             Err(e) => {
-                // BUSYGROUP indicates the group already exists
-                if let redis::ErrorKind::ExtensionError = e.kind() {
-                    if e.code() == Some("BUSYGROUP") {
-                        return Ok(());
-                    }
+                if e.to_string().contains("BUSYGROUP") {
+                    println!("[BUS_DEBUG] ℹ️ Consumer group already exists");
+                    // Group already exists, which is fine
+                    Ok(())
+                } else {
+                    println!("[BUS_DEBUG] ❌ Failed to create consumer group: {}", e);
+                    Err(BusError::Redis(e))
                 }
-                Err(BusError::Redis(e))
             }
         }
     }
@@ -184,28 +220,89 @@ impl Bus {
         consumer: &str,
         block_ms: u64,
     ) -> Result<Option<Envelope>, BusError> {
-        let mut conn = self.client.get_async_connection().await?;
-        let reply: redis::Value = redis::cmd("XREADGROUP")
-            .arg("GROUP")
-            .arg(group)
-            .arg(consumer)
-            .arg("BLOCK")
-            .arg(block_ms)
-            .arg("COUNT")
-            .arg(1)
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        println!("\n[BUS_DEBUG][{}] WAITING FOR MESSAGE", timestamp);
+        println!("[BUS_DEBUG] Stream: {}", stream);
+        println!("[BUS_DEBUG] Consumer Group: {}", group);
+        println!("[BUS_DEBUG] Consumer ID: {}", consumer);
+        println!("[BUS_DEBUG] Block Timeout: {}ms", block_ms);
+        println!("\n[BUS_DEBUG] WAITING FOR MESSAGE");
+        println!("[BUS_DEBUG] Stream: {}", stream);
+        println!("[BUS_DEBUG] Consumer Group: {}", group);
+        println!("[BUS_DEBUG] Consumer ID: {}", consumer);
+        println!("[BUS_DEBUG] Block Timeout: {}ms", block_ms);
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        println!("\n[BUS_DEBUG][{}] WAITING FOR MESSAGE", timestamp);
+        println!("[BUS_DEBUG] Stream: {}", stream);
+        println!("[BUS_DEBUG] Consumer Group: {}", group);
+        println!("[BUS_DEBUG] Consumer ID: {}", consumer);
+        println!("[BUS_DEBUG] Block Timeout: {}ms", block_ms);
+
+        let start = std::time::Instant::now();
+        let mut conn = match self.client.get_async_connection().await {
+            Ok(conn) => {
+                println!("[BUS_DEBUG] ✅ Connected to Redis");
+                conn
+            }
+            Err(e) => {
+                println!("[BUS_ERROR] ❌ Redis connection failed: {}", e);
+                return Err(BusError::Redis(e));
+            }
+        };
+
+        println!("[BUS_DEBUG] Executing XREADGROUP on stream: {}", stream);
+        
+        let reply = match redis::cmd("XREADGROUP")
+            .arg("GROUP").arg(group).arg(consumer)
+            .arg("COUNT").arg(1)
+            .arg("BLOCK").arg(block_ms)
             .arg("STREAMS")
             .arg(stream)
             .arg(">")
-            .query_async(&mut conn)
-            .await?;
+            .query_async::<_, redis::Value>(&mut conn).await {
+            Ok(reply) => {
+                println!("[BUS_DEBUG] ✅ Received reply from Redis (took: {:?})", start.elapsed());
+                reply
+            }
+            Err(e) => {
+                println!("[BUS_ERROR] ❌ Redis command failed: {}", e);
+                return Err(BusError::Redis(e));
+            }
+        };
 
-        if let Some((id, env_json)) = extract_env(&reply) {
-            let mut env: Envelope = serde_json::from_str(&env_json)?;
+        if let Some((id, json)) = extract_env(&reply) {
+            println!("[BUS_DEBUG] 📨 Received message with ID: {}", id);
+            println!("[BUS_DEBUG] Raw message: {}", json);
+            
+            let mut env: Envelope = match serde_json::from_str(&json) {
+                Ok(env) => {
+                    println!("[BUS_DEBUG] ✅ Successfully parsed envelope");
+                    env
+                }
+                Err(e) => {
+                    println!("[BUS_ERROR] ❌ Failed to parse envelope: {}", e);
+                    return Err(BusError::Json(e));
+                }
+            };
+            
             env.envelope_id = Some(id.clone());
             env.consumer_group = Some(group.to_string());
             env.consumer_id = Some(consumer.to_string());
+            
+            println!("[BUS_DEBUG] Envelope ID: {:?}", env.envelope_id);
+            println!("[BUS_DEBUG] Correlation ID: {:?}", env.correlation_id);
+            println!("[BUS_DEBUG] Role: {}", env.role);
+            println!("[BUS_DEBUG] Agent: {:?}", env.agent_name);
+            println!("[BUS_DEBUG] Target: {:?}", env.target);
+            println!("[BUS_DEBUG] Reply To: {:?}", env.reply_to);
+            println!("[BUS_DEBUG] Envelope Type: {:?}", env.envelope_type);
+            println!("[BUS_DEBUG] Content: {}", env.content);
+            
             return Ok(Some(env));
+        } else {
+            println!("[BUS_DEBUG] ⏳ No messages received (timeout or empty stream)");
         }
+        
         Ok(None)
     }
 

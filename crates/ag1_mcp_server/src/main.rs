@@ -38,7 +38,7 @@ struct DelegateParams {
 
 fn default_role() -> String { "user".into() }
 fn default_envelope_type() -> String { "message".into() }
-fn default_timeout() -> u64 { 8000 }
+fn default_timeout() -> u64 { 30000 }
 
 // ---------- Server ----------
 
